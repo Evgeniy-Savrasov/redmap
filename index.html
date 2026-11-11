@@ -9,7 +9,6 @@
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
 
-  /* ---------- Экран входа ---------- */
   #loginScreen {
     position: fixed; inset: 0; z-index: 10000;
     background: #1a1a1a; color: #eee;
@@ -32,11 +31,9 @@
   }
   #loginScreen .error { color: #e74c3c; font-size: 13px; margin-top: 10px; display: none; }
 
-  /* ---------- Основное приложение ---------- */
   #app { display: flex; flex-direction: column; height: 100%; }
   #map { flex: 1; min-height: 0; z-index: 1; }
 
-  /* Нижняя панель (bottom sheet) */
   #panel {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000;
     background: #1a1a1a; color: #eee;
@@ -83,13 +80,11 @@
   .stats { font-size: 13px; background: #222; padding: 10px; border-radius: 8px; }
   .stats div { display: flex; justify-content: space-between; margin: 3px 0; }
 
-  /* Попап */
   .popup-title { font-weight: 700; margin-bottom: 4px; }
   .popup-line { font-size: 13px; margin: 2px 0; }
   .popup-actions { margin-top: 8px; display: flex; gap: 6px; }
   .popup-actions button { padding: 6px 10px; font-size: 12px; }
 
-  /* Тост */
   #toast {
     position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
     background: #e63946; color: #fff; padding: 10px 18px; border-radius: 8px;
@@ -106,7 +101,6 @@
 </head>
 <body>
 
-<!-- Экран входа -->
 <div id="loginScreen">
   <div class="box">
     <h1>🗺️ Красная карта</h1>
@@ -124,7 +118,6 @@
   </div>
 </div>
 
-<!-- Приложение -->
 <div id="app" style="display:none;">
   <div id="map"></div>
 
@@ -207,21 +200,15 @@
 
 <div id="toast"></div>
 
-<!-- Supabase -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-/* ============================================================
-   НАСТРОЙКА SUPABASE 
-   ============================================================ */
 const SUPABASE_URL = 'https://cvexbdkzjrfaxetbokat.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_tv5bBBOi7-Q161x3uFLAhQ_YTx1nDii';
 
-/* ============================================================
-   ПОЛЬЗОВАТЕЛИ (логин/пароль)
-   ============================================================ */
 const USERS = {
   'Savrasov':   '1917',
+  'Admin':      '1917',
   'Aleksandr':  '1918',
   'Aven':       '1919',
   'Aurora':     '1920',
@@ -238,7 +225,9 @@ const USERS = {
   'test10': '1010'
 };
 
-const DELAY_MINUTES = 5; // задержка появления точки у других
+const ADMINS = ['Savrasov', 'Admin'];
+
+const DELAY_MINUTES = 5;
 
 const STATUS_LABELS = {
   fresh: 'Свежие', torn: 'Частично сорвано',
@@ -249,20 +238,22 @@ const STATUS_COLORS = {
   missing: '#e74c3c', unknown: '#95a5a6'
 };
 
-// ---------- Supabase ----------
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// ---------- Состояние ----------
 let currentUser = null;
 let points = [];
-let markersMap = new Map(); // id -> marker
+let markersMap = new Map();
 let map = null;
 let markersLayer = null;
 let channel = null;
 let pickMode = false;
 
-// ---------- Утилиты ----------
+// админ?
+function isAdmin() {
+  return ADMINS.includes(currentUser);
+}
+
 function toast(msg) {
   const el = document.getElementById('toast');
   el.textContent = msg;
@@ -277,7 +268,16 @@ function escapeHtml(s) {
   }[c]));
 }
 
-// ---------- Вход ----------
+// проверка валидности точки
+function isValidPoint(p) {
+  return p
+    && p.id
+    && typeof p.lat === 'number' && !isNaN(p.lat) && p.lat >= -90 && p.lat <= 90
+    && typeof p.lng === 'number' && !isNaN(p.lng) && p.lng >= -180 && p.lng <= 180
+    && p.visible_after;
+}
+
+// вход
 document.getElementById('btnLogin').addEventListener('click', doLogin);
 document.getElementById('loginPass').addEventListener('keydown', e => {
   if (e.key === 'Enter') doLogin();
@@ -293,14 +293,13 @@ function doLogin() {
     err.style.display = 'none';
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
-    // Небольшая задержка, чтобы карта получила размеры контейнера
     setTimeout(initApp, 50);
   } else {
     err.style.display = 'block';
   }
 }
 
-// ---------- Выход ----------
+// выход
 document.getElementById('btnLogout').addEventListener('click', () => {
   if (channel) db.removeChannel(channel);
   if (map) { map.remove(); map = null; }
@@ -313,7 +312,7 @@ document.getElementById('btnLogout').addEventListener('click', () => {
   document.getElementById('loginPass').value = '';
 });
 
-// ---------- Инициализация приложения ----------
+// запуск
 async function initApp() {
   map = L.map('map').setView([55.7558, 37.6173], 12);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -329,18 +328,18 @@ async function initApp() {
   setupPanel();
   renderStats();
 
-  // Пересчитать размеры карты после отрисовки
   setTimeout(() => map.invalidateSize(), 100);
 }
 
-// ---------- Загрузка точек ----------
+// загрузка точек
 async function loadPoints() {
-  const now = new Date().toISOString();
-  const { data, error } = await db
-    .from('points')
-    .select('*')
-    .lte('visible_after', now)
-    .order('created_at', { ascending: true });
+  let query = db.from('points').select('*').order('created_at', { ascending: true });
+
+  if (!isAdmin()) {
+    query = query.lte('visible_after', new Date().toISOString());
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     console.error('Ошибка загрузки:', error);
@@ -348,11 +347,11 @@ async function loadPoints() {
     return;
   }
 
-  points = data || [];
+  points = (data || []).filter(isValidPoint);
   renderAllMarkers();
 }
 
-// ---------- Realtime подписка ----------
+// подписка на изменения
 function subscribeRealtime() {
   channel = db
     .channel('points-channel')
@@ -361,12 +360,16 @@ function subscribeRealtime() {
       { event: 'INSERT', schema: 'public', table: 'points' },
       (payload) => {
         const p = payload.new;
-        const delay = new Date(p.visible_after) - Date.now();
-        if (delay <= 0) {
+        if (!isValidPoint(p)) return;
+
+        if (isAdmin()) {
           addPointToState(p);
-        } else {
-          setTimeout(() => addPointToState(p), delay);
+          return;
         }
+
+        const delay = new Date(p.visible_after) - Date.now();
+        if (delay <= 0) addPointToState(p);
+        else setTimeout(() => addPointToState(p), delay);
       }
     )
     .on(
@@ -374,6 +377,7 @@ function subscribeRealtime() {
       { event: 'UPDATE', schema: 'public', table: 'points' },
       (payload) => {
         const p = payload.new;
+        if (!isValidPoint(p)) return;
         const existing = points.find(x => x.id === p.id);
         if (existing) {
           Object.assign(existing, p);
@@ -402,7 +406,7 @@ function addPointToState(p) {
   renderStats();
 }
 
-// ---------- Маркеры ----------
+// маркеры
 function renderAllMarkers() {
   markersLayer.clearLayers();
   markersMap.clear();
@@ -455,13 +459,17 @@ function removeMarker(id) {
   }
 }
 
+// попап
 function buildPopupHtml(p) {
+  const isShadow = new Date(p.visible_after) > new Date();
   return `
     <div class="popup-title">${escapeHtml(p.address) || 'Без адреса'}</div>
     <div class="popup-line">Статус: <b>${STATUS_LABELS[p.status] || p.status}</b></div>
     <div class="popup-line">Сопротивление: <b>${p.resistance || '—'}/5</b></div>
     ${p.notes ? `<div class="popup-line">📝 ${escapeHtml(p.notes)}</div>` : ''}
-    <div class="popup-line" style="color:#888;font-size:11px;">${escapeHtml(p.created_by || '')} · ${new Date(p.created_at).toLocaleString()}</div>
+    <div class="popup-line">👤 Автор: <b>${escapeHtml(p.created_by || '—')}</b></div>
+    ${isShadow && isAdmin() ? `<div class="popup-line" style="color:#f39c12;">⏳ Появится у всех: ${new Date(p.visible_after).toLocaleString()}</div>` : ''}
+    <div class="popup-line" style="color:#888;font-size:11px;">${new Date(p.created_at).toLocaleString()}</div>
     <div class="popup-actions">
       <button onclick="window.__redmapChangeStatus('${p.id}')">Сменить статус</button>
       <button onclick="window.__redmapDelete('${p.id}')">Удалить</button>
@@ -469,7 +477,7 @@ function buildPopupHtml(p) {
   `;
 }
 
-// ---------- Глобальные действия ----------
+// смена статуса
 window.__redmapChangeStatus = async function (id) {
   const order = ['fresh', 'torn', 'missing', 'unknown'];
   const p = points.find(x => x.id === id);
@@ -481,6 +489,7 @@ window.__redmapChangeStatus = async function (id) {
   toast('Статус: ' + STATUS_LABELS[newStatus]);
 };
 
+// удаление
 window.__redmapDelete = async function (id) {
   if (!confirm('Удалить точку?')) return;
   const { error } = await db.from('points').delete().eq('id', id);
@@ -488,7 +497,7 @@ window.__redmapDelete = async function (id) {
   toast('Точка удалена');
 };
 
-// ---------- Добавление точки ----------
+// добавление
 async function addPointFromForm() {
   const lat = parseFloat(document.getElementById('inpLat').value);
   const lng = parseFloat(document.getElementById('inpLng').value);
@@ -530,7 +539,7 @@ async function addPointFromForm() {
   toast(`Точка сохранена. Появится у всех через ${DELAY_MINUTES} мин.`);
 }
 
-// ---------- Статистика ----------
+// статистика
 function renderStats() {
   const total = points.length;
   const byStatus = { fresh: 0, torn: 0, missing: 0, unknown: 0 };
@@ -553,7 +562,7 @@ function renderStats() {
   `;
 }
 
-// ---------- Слушатели ----------
+// слушатели
 function setupEventListeners() {
   document.getElementById('btnAdd').addEventListener('click', addPointFromForm);
 
@@ -591,7 +600,7 @@ function setupEventListeners() {
   });
 }
 
-// ---------- Панель ----------
+// панель
 function setupPanel() {
   const panel = document.getElementById('panel');
   const handle = document.getElementById('panelHandle');
@@ -605,7 +614,7 @@ function setupPanel() {
   handle.textContent = 'Панель';
 }
 
-// ---------- Telegram WebApp ----------
+// телеграм
 if (window.Telegram && window.Telegram.WebApp) {
   window.Telegram.WebApp.ready();
   window.Telegram.WebApp.expand();

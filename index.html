@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Красная карта</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+
+  /* ---------- Экран входа ---------- */
+  #loginScreen {
+    position: fixed; inset: 0; z-index: 10000;
+    background: #1a1a1a; color: #eee;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  #loginScreen .box { width: 100%; max-width: 340px; }
+  #loginScreen h1 { font-size: 22px; margin: 0 0 6px; color: #e63946; }
+  #loginScreen p { font-size: 13px; color: #888; margin: 0 0 24px; }
+  #loginScreen .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  #loginScreen label { font-size: 12px; color: #bbb; }
+  #loginScreen input {
+    font: inherit; padding: 12px; border-radius: 8px; border: 1px solid #444;
+    background: #2a2a2a; color: #eee; width: 100%; font-size: 16px;
+  }
+  #loginScreen button {
+    width: 100%; padding: 14px; border: none; border-radius: 8px;
+    background: #e63946; color: #fff; font-weight: 700; font-size: 16px;
+    cursor: pointer; margin-top: 8px;
+  }
+  #loginScreen .error { color: #e74c3c; font-size: 13px; margin-top: 10px; display: none; }
+
+  /* ---------- Основное приложение ---------- */
+  #app { display: flex; flex-direction: column; height: 100%; }
+  #map { flex: 1; min-height: 0; z-index: 1; }
+
+  /* Нижняя панель (bottom sheet) */
+  #panel {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000;
+    background: #1a1a1a; color: #eee;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -4px 20px rgba(0,0,0,.4);
+    transform: translateY(calc(100% - 56px));
+    transition: transform .3s ease;
+    max-height: 70vh;
+    display: flex; flex-direction: column;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  #panel.open { transform: translateY(0); }
+  #panelHandle {
+    flex-shrink: 0; height: 56px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; position: relative;
+    font-size: 14px; font-weight: 600; color: #e63946;
+    user-select: none;
+  }
+  #panelHandle::before {
+    content: ''; position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    width: 36px; height: 4px; border-radius: 2px; background: #444;
+  }
+  #panelContent {
+    overflow-y: auto; padding: 0 16px 16px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  #panel h2 { font-size: 12px; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .5px; color: #999; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: #bbb; }
+  input, select, textarea, button {
+    font: inherit; padding: 10px; border-radius: 8px; border: 1px solid #444;
+    background: #2a2a2a; color: #eee; width: 100%; font-size: 16px;
+  }
+  input[type="range"] { padding: 0; }
+  button { cursor: pointer; background: #e63946; border: none; font-weight: 600; font-size: 15px; padding: 12px; }
+  button:active { background: #d62839; }
+  button.secondary { background: #333; }
+  button.secondary:active { background: #444; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 4px 0; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; border: 1px solid #000; flex-shrink: 0; }
+  .stats { font-size: 13px; background: #222; padding: 10px; border-radius: 8px; }
+  .stats div { display: flex; justify-content: space-between; margin: 3px 0; }
+
+  /* Попап */
+  .popup-title { font-weight: 700; margin-bottom: 4px; }
+  .popup-line { font-size: 13px; margin: 2px 0; }
+  .popup-actions { margin-top: 8px; display: flex; gap: 6px; }
+  .popup-actions button { padding: 6px 10px; font-size: 12px; }
+
+  /* Тост */
+  #toast {
+    position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+    background: #e63946; color: #fff; padding: 10px 18px; border-radius: 8px;
+    font-size: 14px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 9999;
+    max-width: 90vw; text-align: center;
+  }
+  #toast.show { opacity: 1; }
+
+  @media (min-width: 768px) {
+    #panel { max-width: 400px; left: auto; right: 16px; bottom: 16px; border-radius: 16px; }
+    #panel:not(.open) { transform: translateY(calc(100% - 56px)); }
+  }
+</style>
+</head>
+<body>
+
+<!-- Экран входа -->
+<div id="loginScreen">
+  <div class="box">
+    <h1>🗺️ Красная карта</h1>
+    <p>Вход для своих</p>
+    <div class="field">
+      <label>Логин</label>
+      <input id="loginUser" autocomplete="username" placeholder="Логин" />
+    </div>
+    <div class="field">
+      <label>Пароль</label>
+      <input id="loginPass" type="password" autocomplete="current-password" placeholder="••••" />
+    </div>
+    <button id="btnLogin">Войти</button>
+    <div class="error" id="loginError">Неверный логин или пароль</div>
+  </div>
+</div>
+
+<!-- Приложение -->
+<div id="app" style="display:none;">
+  <div id="map"></div>
+
+  <div id="panel">
+    <div id="panelHandle">Панель</div>
+    <div id="panelContent">
+      <div>
+        <h2>Легенда</h2>
+        <div class="legend-item"><span class="dot" style="background:#2ecc71"></span> Свежие листовки</div>
+        <div class="legend-item"><span class="dot" style="background:#f39c12"></span> Частично сорвано</div>
+        <div class="legend-item"><span class="dot" style="background:#e74c3c"></span> Сорвано / нет</div>
+        <div class="legend-item"><span class="dot" style="background:#95a5a6"></span> Нет данных</div>
+      </div>
+
+      <div>
+        <h2>Фильтр по статусу</h2>
+        <select id="filterStatus">
+          <option value="all">Все</option>
+          <option value="fresh">Свежие</option>
+          <option value="torn">Частично сорвано</option>
+          <option value="missing">Сорвано / нет</option>
+          <option value="unknown">Нет данных</option>
+        </select>
+      </div>
+
+      <div>
+        <h2>Добавить точку</h2>
+        <div class="field">
+          <label>Адрес / описание</label>
+          <input id="inpAddress" placeholder="ул. Ленина, 5 — столб" />
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>Широта</label>
+            <input id="inpLat" type="number" step="any" placeholder="55.7558" />
+          </div>
+          <div class="field">
+            <label>Долгота</label>
+            <input id="inpLng" type="number" step="any" placeholder="37.6173" />
+          </div>
+        </div>
+        <div class="field">
+          <label>Статус</label>
+          <select id="inpStatus">
+            <option value="fresh">Свежие</option>
+            <option value="torn">Частично сорвано</option>
+            <option value="missing">Сорвано / нет</option>
+            <option value="unknown">Нет данных</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Сопротивление: <span id="resVal">3</span>/5</label>
+          <input id="inpResistance" type="range" min="1" max="5" value="3" />
+        </div>
+        <div class="field">
+          <label>Заметка</label>
+          <textarea id="inpNotes" rows="2" placeholder="Охрана, камеры..."></textarea>
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <button id="btnAdd" class="secondary">Добавить</button>
+          <button id="btnPick">📍 На карте</button>
+        </div>
+        <p id="pickHint" style="font-size:12px;color:#f39c12;display:none;margin:6px 0 0;">
+          Кликните по карте — координаты подставятся.
+        </p>
+      </div>
+
+      <div>
+        <h2>Аналитика</h2>
+        <div class="stats" id="stats"></div>
+      </div>
+
+      <div class="row" style="margin-top:8px;">
+        <button id="btnExport" class="secondary">Экспорт</button>
+        <button id="btnLogout" class="secondary">Выйти</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- Supabase -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* ============================================================
+   НАСТРОЙКА SUPABASE 
+   ============================================================ */
+const SUPABASE_URL = 'https://cvexbdkzjrfaxetbokat.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_tv5bBBOi7-Q161x3uFLAhQ_YTx1nDii';
+
+/* ============================================================
+   ПОЛЬЗОВАТЕЛИ (логин/пароль)
+   ============================================================ */
+const USERS = {
+  'Savrasov':   '1917',
+  'Aleksandr':  '1918',
+  'Aven':       '1919',
+  'Aurora':     '1920',
+  'Svyatoslav': '1921',
+  'test1':  '1111',
+  'test2':  '2222',
+  'test3':  '3333',
+  'test4':  '4444',
+  'test5':  '5555',
+  'test6':  '6666',
+  'test7':  '7777',
+  'test8':  '8888',
+  'test9':  '9999',
+  'test10': '1010'
+};
+
+const DELAY_MINUTES = 5; // задержка появления точки у других
+
+const STATUS_LABELS = {
+  fresh: 'Свежие', torn: 'Частично сорвано',
+  missing: 'Сорвано / нет', unknown: 'Нет данных'
+};
+const STATUS_COLORS = {
+  fresh: '#2ecc71', torn: '#f39c12',
+  missing: '#e74c3c', unknown: '#95a5a6'
+};
+
+// ---------- Supabase ----------
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ---------- Состояние ----------
+let currentUser = null;
+let points = [];
+let markersMap = new Map(); // id -> marker
+let map = null;
+let markersLayer = null;
+let channel = null;
+let pickMode = false;
+
+// ---------- Утилиты ----------
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+// ---------- Вход ----------
+document.getElementById('btnLogin').addEventListener('click', doLogin);
+document.getElementById('loginPass').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+
+function doLogin() {
+  const user = document.getElementById('loginUser').value.trim();
+  const pass = document.getElementById('loginPass').value;
+  const err = document.getElementById('loginError');
+
+  if (USERS[user] && USERS[user] === pass) {
+    currentUser = user;
+    err.style.display = 'none';
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    // Небольшая задержка, чтобы карта получила размеры контейнера
+    setTimeout(initApp, 50);
+  } else {
+    err.style.display = 'block';
+  }
+}
+
+// ---------- Выход ----------
+document.getElementById('btnLogout').addEventListener('click', () => {
+  if (channel) db.removeChannel(channel);
+  if (map) { map.remove(); map = null; }
+  points = [];
+  markersMap.clear();
+  currentUser = null;
+  pickMode = false;
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('loginPass').value = '';
+});
+
+// ---------- Инициализация приложения ----------
+async function initApp() {
+  map = L.map('map').setView([55.7558, 37.6173], 12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap'
+  }).addTo(map);
+
+  markersLayer = L.layerGroup().addTo(map);
+
+  await loadPoints();
+  subscribeRealtime();
+  setupEventListeners();
+  setupPanel();
+  renderStats();
+
+  // Пересчитать размеры карты после отрисовки
+  setTimeout(() => map.invalidateSize(), 100);
+}
+
+// ---------- Загрузка точек ----------
+async function loadPoints() {
+  const now = new Date().toISOString();
+  const { data, error } = await db
+    .from('points')
+    .select('*')
+    .lte('visible_after', now)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Ошибка загрузки:', error);
+    toast('Ошибка загрузки данных');
+    return;
+  }
+
+  points = data || [];
+  renderAllMarkers();
+}
+
+// ---------- Realtime подписка ----------
+function subscribeRealtime() {
+  channel = db
+    .channel('points-channel')
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'points' },
+      (payload) => {
+        const p = payload.new;
+        const delay = new Date(p.visible_after) - Date.now();
+        if (delay <= 0) {
+          addPointToState(p);
+        } else {
+          setTimeout(() => addPointToState(p), delay);
+        }
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'points' },
+      (payload) => {
+        const p = payload.new;
+        const existing = points.find(x => x.id === p.id);
+        if (existing) {
+          Object.assign(existing, p);
+          updateMarker(existing);
+          renderStats();
+        }
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'points' },
+      (payload) => {
+        const id = payload.old.id;
+        points = points.filter(x => x.id !== id);
+        removeMarker(id);
+        renderStats();
+      }
+    )
+    .subscribe();
+}
+
+function addPointToState(p) {
+  if (points.find(x => x.id === p.id)) return;
+  points.push(p);
+  renderMarker(p);
+  renderStats();
+}
+
+// ---------- Маркеры ----------
+function renderAllMarkers() {
+  markersLayer.clearLayers();
+  markersMap.clear();
+  const filter = document.getElementById('filterStatus').value;
+  points.forEach(p => {
+    if (filter !== 'all' && p.status !== filter) return;
+    renderMarker(p);
+  });
+}
+
+function renderMarker(p) {
+  const filter = document.getElementById('filterStatus').value;
+  if (filter !== 'all' && p.status !== filter) {
+    removeMarker(p.id);
+    return;
+  }
+
+  if (markersMap.has(p.id)) {
+    updateMarker(p);
+    return;
+  }
+
+  const marker = L.circleMarker([p.lat, p.lng], {
+    radius: 9,
+    fillColor: STATUS_COLORS[p.status] || STATUS_COLORS.unknown,
+    color: '#000',
+    weight: 1,
+    opacity: 1,
+    fillOpacity: 0.85
+  });
+
+  marker.bindPopup(buildPopupHtml(p));
+  marker.addTo(markersLayer);
+  markersMap.set(p.id, marker);
+}
+
+function updateMarker(p) {
+  const marker = markersMap.get(p.id);
+  if (!marker) { renderMarker(p); return; }
+  marker.setLatLng([p.lat, p.lng]);
+  marker.setStyle({ fillColor: STATUS_COLORS[p.status] || STATUS_COLORS.unknown });
+  marker.setPopupContent(buildPopupHtml(p));
+}
+
+function removeMarker(id) {
+  const marker = markersMap.get(id);
+  if (marker) {
+    markersLayer.removeLayer(marker);
+    markersMap.delete(id);
+  }
+}
+
+function buildPopupHtml(p) {
+  return `
+    <div class="popup-title">${escapeHtml(p.address) || 'Без адреса'}</div>
+    <div class="popup-line">Статус: <b>${STATUS_LABELS[p.status] || p.status}</b></div>
+    <div class="popup-line">Сопротивление: <b>${p.resistance || '—'}/5</b></div>
+    ${p.notes ? `<div class="popup-line">📝 ${escapeHtml(p.notes)}</div>` : ''}
+    <div class="popup-line" style="color:#888;font-size:11px;">${escapeHtml(p.created_by || '')} · ${new Date(p.created_at).toLocaleString()}</div>
+    <div class="popup-actions">
+      <button onclick="window.__redmapChangeStatus('${p.id}')">Сменить статус</button>
+      <button onclick="window.__redmapDelete('${p.id}')">Удалить</button>
+    </div>
+  `;
+}
+
+// ---------- Глобальные действия ----------
+window.__redmapChangeStatus = async function (id) {
+  const order = ['fresh', 'torn', 'missing', 'unknown'];
+  const p = points.find(x => x.id === id);
+  if (!p) return;
+  const idx = order.indexOf(p.status);
+  const newStatus = order[(idx + 1) % order.length];
+  const { error } = await db.from('points').update({ status: newStatus }).eq('id', id);
+  if (error) { toast('Ошибка обновления'); return; }
+  toast('Статус: ' + STATUS_LABELS[newStatus]);
+};
+
+window.__redmapDelete = async function (id) {
+  if (!confirm('Удалить точку?')) return;
+  const { error } = await db.from('points').delete().eq('id', id);
+  if (error) { toast('Ошибка удаления'); return; }
+  toast('Точка удалена');
+};
+
+// ---------- Добавление точки ----------
+async function addPointFromForm() {
+  const lat = parseFloat(document.getElementById('inpLat').value);
+  const lng = parseFloat(document.getElementById('inpLng').value);
+  const address = document.getElementById('inpAddress').value.trim();
+  const status = document.getElementById('inpStatus').value;
+  const resistance = parseInt(document.getElementById('inpResistance').value, 10);
+  const notes = document.getElementById('inpNotes').value.trim();
+
+  if (isNaN(lat) || isNaN(lng)) {
+    toast('Укажите координаты или кликните «На карте»');
+    return;
+  }
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    toast('Координаты вне диапазона');
+    return;
+  }
+
+  const visibleAfter = new Date(Date.now() + DELAY_MINUTES * 60 * 1000).toISOString();
+
+  const { error } = await db.from('points').insert({
+    lat, lng, address, status, resistance, notes,
+    created_by: currentUser,
+    visible_after: visibleAfter
+  });
+
+  if (error) {
+    console.error(error);
+    toast('Ошибка сохранения');
+    return;
+  }
+
+  document.getElementById('inpAddress').value = '';
+  document.getElementById('inpLat').value = '';
+  document.getElementById('inpLng').value = '';
+  document.getElementById('inpNotes').value = '';
+  document.getElementById('inpResistance').value = 3;
+  document.getElementById('resVal').textContent = '3';
+
+  toast(`Точка сохранена. Появится у всех через ${DELAY_MINUTES} мин.`);
+}
+
+// ---------- Статистика ----------
+function renderStats() {
+  const total = points.length;
+  const byStatus = { fresh: 0, torn: 0, missing: 0, unknown: 0 };
+  let resSum = 0, resCount = 0;
+
+  points.forEach(p => {
+    byStatus[p.status] = (byStatus[p.status] || 0) + 1;
+    if (p.resistance) { resSum += p.resistance; resCount++; }
+  });
+
+  const avgRes = resCount ? (resSum / resCount).toFixed(1) : '—';
+
+  document.getElementById('stats').innerHTML = `
+    <div><span>Всего:</span><b>${total}</b></div>
+    <div><span>Свежие:</span><b>${byStatus.fresh}</b></div>
+    <div><span>Частично:</span><b>${byStatus.torn}</b></div>
+    <div><span>Сорвано:</span><b>${byStatus.missing}</b></div>
+    <div><span>Без данных:</span><b>${byStatus.unknown}</b></div>
+    <div><span>Ср. сопротивление:</span><b>${avgRes}/5</b></div>
+  `;
+}
+
+// ---------- Слушатели ----------
+function setupEventListeners() {
+  document.getElementById('btnAdd').addEventListener('click', addPointFromForm);
+
+  document.getElementById('inpResistance').addEventListener('input', (e) => {
+    document.getElementById('resVal').textContent = e.target.value;
+  });
+
+  document.getElementById('filterStatus').addEventListener('change', () => {
+    renderAllMarkers();
+  });
+
+  document.getElementById('btnExport').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(points, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'redmap_points.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById('btnPick').addEventListener('click', () => {
+    pickMode = true;
+    document.getElementById('pickHint').style.display = 'block';
+    toast('Кликните по карте');
+  });
+
+  map.on('click', (e) => {
+    if (!pickMode) return;
+    document.getElementById('inpLat').value = e.latlng.lat.toFixed(6);
+    document.getElementById('inpLng').value = e.latlng.lng.toFixed(6);
+    pickMode = false;
+    document.getElementById('pickHint').style.display = 'none';
+    toast('Координаты подставлены');
+  });
+}
+
+// ---------- Панель ----------
+function setupPanel() {
+  const panel = document.getElementById('panel');
+  const handle = document.getElementById('panelHandle');
+
+  handle.addEventListener('click', () => {
+    panel.classList.toggle('open');
+    handle.textContent = panel.classList.contains('open') ? 'Свернуть' : 'Панель';
+    setTimeout(() => { if (map) map.invalidateSize(); }, 350);
+  });
+
+  handle.textContent = 'Панель';
+}
+
+// ---------- Telegram WebApp ----------
+if (window.Telegram && window.Telegram.WebApp) {
+  window.Telegram.WebApp.ready();
+  window.Telegram.WebApp.expand();
+}
+</script>
+</body>
+</html>
